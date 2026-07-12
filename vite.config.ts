@@ -7,6 +7,8 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         stats: resolve(__dirname, 'stats.html'),
+        settings: resolve(__dirname, 'settings.html'),
+        categories: resolve(__dirname, 'categories.html'),
       },
     },
   },

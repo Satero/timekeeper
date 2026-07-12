@@ -4,12 +4,26 @@ import { getCategories, saveCategories, getEntries, saveEntries, todayISO, forma
 import { escapeHtml, escapeAttr } from './dom.ts'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
-const today = todayISO()
+let currentDate = todayISO()
 
-function render() {
+type FormValues = Record<string, { hours: number; minutes: number }>
+
+function getFormValues(): FormValues {
+  const values: FormValues = {}
+  document.querySelectorAll<HTMLElement>('.category-row').forEach((row) => {
+    const category = categoryNameFromRow(row)
+    values[category] = {
+      hours: Number((row.querySelector('.hours-input') as HTMLInputElement).value) || 0,
+      minutes: Number((row.querySelector('.minutes-input') as HTMLInputElement).value) || 0,
+    }
+  })
+  return values
+}
+
+function render(preservedValues?: FormValues) {
   const categories = getCategories()
   const entries = getEntries()
-  const todayEntry = entries[today] ?? {}
+  const todayEntry = entries[currentDate] ?? {}
 
   app.innerHTML = `
     ${renderNav('log')}
@@ -21,12 +35,19 @@ function render() {
       <form id="log-form" class="log-form">
         <div class="category-rows">
           ${categories
-            .map((category) => {
-              const minutes = todayEntry[category] ?? 0
+            .map((category, index) => {
+              const preserved = preservedValues?.[category]
+              const minutes = preserved
+                ? preserved.hours * 60 + preserved.minutes
+                : (todayEntry[category] ?? 0)
               const hours = Math.floor(minutes / 60)
               const mins = minutes % 60
               return `
                 <div class="category-row" data-category="${escapeAttr(category)}">
+                  <div class="reorder-controls">
+                    <button type="button" class="move-category up" data-category="${escapeAttr(category)}" aria-label="Move ${escapeAttr(category)} up" ${index === 0 ? 'disabled' : ''}>&uarr;</button>
+                    <button type="button" class="move-category down" data-category="${escapeAttr(category)}" aria-label="Move ${escapeAttr(category)} down" ${index === categories.length - 1 ? 'disabled' : ''}>&darr;</button>
+                  </div>
                   <span class="category-name">${escapeHtml(category)}</span>
                   <label class="sr-only" for="hours-${escapeAttr(category)}">Hours</label>
                   <input id="hours-${escapeAttr(category)}" class="hours-input" type="number" min="0" max="23" value="${hours}" />
@@ -34,17 +55,10 @@ function render() {
                   <label class="sr-only" for="minutes-${escapeAttr(category)}">Minutes</label>
                   <input id="minutes-${escapeAttr(category)}" class="minutes-input" type="number" min="0" max="59" value="${mins}" />
                   <span class="unit">m</span>
-                  <button type="button" class="remove-category" data-category="${escapeAttr(category)}" aria-label="Remove ${escapeAttr(category)}">&times;</button>
                 </div>
               `
             })
             .join('')}
-        </div>
-
-        <div class="add-category">
-          <label class="sr-only" for="new-category">New category</label>
-          <input id="new-category" type="text" placeholder="Add a category" maxlength="40" />
-          <button type="button" id="add-category-btn" class="counter">Add</button>
         </div>
 
         <div class="log-total">
@@ -91,16 +105,8 @@ function wireUp() {
     })
   })
 
-  document.querySelectorAll<HTMLButtonElement>('.remove-category').forEach((button) => {
-    button.addEventListener('click', () => removeCategory(button))
-  })
-
-  document.querySelector<HTMLButtonElement>('#add-category-btn')!.addEventListener('click', addCategory)
-  document.querySelector<HTMLInputElement>('#new-category')!.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      addCategory()
-    }
+  document.querySelectorAll<HTMLButtonElement>('.move-category').forEach((button) => {
+    button.addEventListener('click', () => moveCategory(button))
   })
 
   document.querySelector<HTMLFormElement>('#log-form')!.addEventListener('submit', (event) => {
@@ -114,25 +120,18 @@ function categoryNameFromRow(row: HTMLElement): string {
   return nameEl.textContent ?? ''
 }
 
-function removeCategory(button: HTMLButtonElement) {
-  const row = button.closest<HTMLElement>('.category-row')!
-  const category = categoryNameFromRow(row)
-  const categories = getCategories().filter((c) => c !== category)
-  saveCategories(categories)
-  render()
-}
-
-function addCategory() {
-  const input = document.querySelector<HTMLInputElement>('#new-category')!
-  const name = input.value.trim()
-  if (!name) return
+function moveCategory(button: HTMLButtonElement) {
+  const category = button.dataset.category!
+  const direction = button.classList.contains('up') ? -1 : 1
   const categories = getCategories()
-  if (categories.includes(name)) {
-    input.value = ''
-    return
-  }
-  saveCategories([...categories, name])
-  render()
+  const index = categories.indexOf(category)
+  const newIndex = index + direction
+  if (index < 0 || newIndex < 0 || newIndex >= categories.length) return
+
+  const reordered = [...categories]
+  ;[reordered[index], reordered[newIndex]] = [reordered[newIndex], reordered[index]]
+  saveCategories(reordered)
+  render(getFormValues())
 }
 
 function saveToday() {
@@ -145,7 +144,7 @@ function saveToday() {
     const totalMinutes = hours * 60 + minutes
     if (totalMinutes > 0) todayEntry[category] = totalMinutes
   })
-  entries[today] = todayEntry
+  entries[currentDate] = todayEntry
   saveEntries(entries)
 
   const confirmation = document.querySelector<HTMLElement>('#save-confirmation')!
@@ -155,4 +154,23 @@ function saveToday() {
   }, 2000)
 }
 
+function scheduleMidnightRollover() {
+  const now = new Date()
+  const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0)
+  const msUntilMidnight = nextMidnight.getTime() - now.getTime()
+  window.setTimeout(() => {
+    currentDate = todayISO()
+    render()
+    scheduleMidnightRollover()
+  }, msUntilMidnight)
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && todayISO() !== currentDate) {
+    currentDate = todayISO()
+    render()
+  }
+})
+
 render()
+scheduleMidnightRollover()

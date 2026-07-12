@@ -50,3 +50,8 @@ export function formatDuration(minutes: number): string {
   if (mins === 0) return `${hours}h`
   return `${hours}h ${mins}m`
 }
+
+export function resetApp(): void {
+  localStorage.removeItem(CATEGORIES_KEY)
+  localStorage.removeItem(ENTRIES_KEY)
+}

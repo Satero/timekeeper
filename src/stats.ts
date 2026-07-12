@@ -1,15 +1,46 @@
 import './style.css'
 import { renderNav } from './nav.ts'
-import { getCategories, getEntries, todayISO, formatDuration } from './storage.ts'
+import { getCategories, getEntries, todayISO, formatDuration, type Entries } from './storage.ts'
 import { buildSeries, seriesColorVar, type Series } from './colors.ts'
 import { escapeHtml, escapeAttr } from './dom.ts'
 
-const HISTORY_DAYS = 14
 const STACK_HEIGHT_PX = 200
+
+interface HistoryRange {
+  label: string
+  days: number
+}
+
+const HISTORY_RANGES: HistoryRange[] = [
+  { label: '3 days', days: 3 },
+  { label: '1 week', days: 7 },
+  { label: '1 month', days: 30 },
+]
+
+const DEFAULT_HISTORY_RANGE_DAYS = HISTORY_RANGES[0].days
 
 interface HistoryDay {
   date: string
   series: Series[]
+}
+
+function lastNDatesISO(n: number): string[] {
+  const [year, month, day] = todayISO().split('-').map(Number)
+  const anchor = new Date(year, month - 1, day)
+  const dates: string[] = []
+  for (let i = n - 1; i >= 0; i--) {
+    const date = new Date(anchor)
+    date.setDate(anchor.getDate() - i)
+    const yyyy = date.getFullYear()
+    const mm = String(date.getMonth() + 1).padStart(2, '0')
+    const dd = String(date.getDate()).padStart(2, '0')
+    dates.push(`${yyyy}-${mm}-${dd}`)
+  }
+  return dates
+}
+
+function buildHistoryDays(entries: Entries, categories: string[], rangeDays: number): HistoryDay[] {
+  return lastNDatesISO(rangeDays).map((date) => ({ date, series: buildSeries(categories, entries[date] ?? {}) }))
 }
 
 function formatShortDate(iso: string): string {
@@ -101,7 +132,8 @@ function renderHistoryChart(days: HistoryDay[]) {
   const container = document.querySelector<HTMLElement>('#history-chart')!
   const emptyState = document.querySelector<HTMLElement>('#history-empty')!
 
-  if (days.length === 0) {
+  const isEmpty = days.every((day) => day.series.reduce((sum, s) => sum + s.minutes, 0) === 0)
+  if (isEmpty) {
     container.hidden = true
     emptyState.hidden = false
     return
@@ -163,6 +195,34 @@ function wireTableToggles() {
   })
 }
 
+function setActiveRangeButton(rangeDays: number) {
+  document.querySelectorAll<HTMLButtonElement>('.range-toggle button').forEach((button) => {
+    if (Number(button.dataset.days) === rangeDays) {
+      button.setAttribute('aria-current', 'page')
+    } else {
+      button.removeAttribute('aria-current')
+    }
+  })
+}
+
+function wireRangeToggle(entries: Entries, categories: string[]) {
+  document.querySelectorAll<HTMLButtonElement>('.range-toggle button').forEach((button) => {
+    button.addEventListener('click', () => {
+      const rangeDays = Number(button.dataset.days)
+      renderHistorySection(entries, categories, rangeDays)
+      setActiveRangeButton(rangeDays)
+    })
+  })
+}
+
+function renderHistorySection(entries: Entries, categories: string[], rangeDays: number) {
+  const heading = document.querySelector<HTMLElement>('#history-heading')!
+  heading.textContent = `History (last ${rangeDays} days)`
+  const days = buildHistoryDays(entries, categories, rangeDays)
+  renderHistoryChart(days)
+  renderHistoryTable(days, categories)
+}
+
 const app = document.querySelector<HTMLDivElement>('#app')!
 const categories = getCategories()
 const entries = getEntries()
@@ -184,8 +244,16 @@ app.innerHTML = `
 
     <div class="chart-card">
       <div class="chart-card-header">
-        <h2>History (last ${HISTORY_DAYS} days)</h2>
-        <button type="button" class="table-toggle" data-target="history-table">Show table</button>
+        <h2 id="history-heading">History (last ${DEFAULT_HISTORY_RANGE_DAYS} days)</h2>
+        <div class="chart-card-header-actions">
+          <div class="range-toggle" role="group" aria-label="History range">
+            ${HISTORY_RANGES.map(
+              (range) =>
+                `<button type="button" data-days="${range.days}"${range.days === DEFAULT_HISTORY_RANGE_DAYS ? ' aria-current="page"' : ''}>${escapeHtml(range.label)}</button>`,
+            ).join('')}
+          </div>
+          <button type="button" class="table-toggle" data-target="history-table">Show table</button>
+        </div>
       </div>
       <div id="history-chart" class="vbar-chart"></div>
       <p id="history-empty" class="empty-state" hidden>No history yet.</p>
@@ -198,15 +266,10 @@ app.innerHTML = `
 `
 
 const todaySeries = buildSeries(categories, entries[todayISO()] ?? {})
-const historyDays: HistoryDay[] = Object.keys(entries)
-  .filter((date) => Object.values(entries[date]).some((minutes) => minutes > 0))
-  .sort()
-  .slice(-HISTORY_DAYS)
-  .map((date) => ({ date, series: buildSeries(categories, entries[date]) }))
 
 renderLegend(categories)
 renderTodayChart(todaySeries)
 renderTodayTable(todaySeries)
-renderHistoryChart(historyDays)
-renderHistoryTable(historyDays, categories)
+renderHistorySection(entries, categories, DEFAULT_HISTORY_RANGE_DAYS)
 wireTableToggles()
+wireRangeToggle(entries, categories)
