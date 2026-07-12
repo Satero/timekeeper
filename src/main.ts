@@ -29,7 +29,7 @@ function render(preservedValues?: FormValues) {
     ${renderNav('log')}
     <section id="center">
       <div>
-        <h1>Log time</h1>
+        <h1>Timekeeper</h1>
         <p>How much time did you spend on each category today?</p>
       </div>
       <form id="log-form" class="log-form">
